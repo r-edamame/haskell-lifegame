@@ -13,6 +13,7 @@ import Control.Arrow ((&&&))
 
 import Linear.V2 (V2(..))
 import Linear.Vector ((^+^),(^-^),(^/))
+import Linear.Matrix ((*!))
 
 import qualified Graphics.Gloss as G
 import qualified Graphics.Gloss.Interface.IO.Game as G
@@ -43,15 +44,6 @@ getNext game pos
       Just _ -> game^.surviveRule
       Nothing -> game^.bornRule
 
-{-
-getNext' :: Game -> V2 Int -> Bool
-getNext' game pos = getNeighborNum (game^.cells) pos `elem` rule
-  where
-    rule = case (game^.cells) A.! pos of
-      True -> game^.surviveRule
-      False -> game^.bornRule
--}
-
 update :: Float -> Game -> IO Game
 update _ game = return $ game { _cells=nextcells }
   where
@@ -71,10 +63,21 @@ render game = return $ G.Translate (negate $ fromIntegral $ div screenx 2) (from
     cellColor BlueCell = G.blue
 
 event :: G.Event -> Game -> IO Game
+event (G.EventKey (G.Char c) G.Down _ _) game
+  | c=='a' = return $ game&setObject.~dot
+  | c=='s' = return $ game&setObject.~block
+  | c=='d' = return $ game&setObject.~glider
+  | c=='f' = return $ game&setObject.~lightSpaceship
+  | c=='g' = return $ game&setObject.~line
+event (G.EventKey (G.SpecialKey s) G.Down _ _) game
+  | s==G.KeyUp = return $ game&setDirection.~U
+  | s==G.KeyDown = return $ game&setDirection.~D
+  | s==G.KeyRight = return $ game&setDirection.~R
+  | s==G.KeyLeft = return $ game&setDirection.~L
 event (G.EventKey (G.Char 'W') G.Down _ _) game = do
   fld <- createRandomCells (game^.fieldSize)
   return $ game&cells.~fld
-event (G.EventKey (G.MouseButton G.LeftButton) G.Down _ (mx,my)) game = return $ game&cells%~(//? mkObj lightSpaceship RedCell clickedPos)
+event (G.EventKey (G.MouseButton G.LeftButton) G.Down _ (mx,my)) game = return $ game&cells%~(//? mkObj (game^.setObject) RedCell clickedPos (game^.setDirection))
   where
     (V2 hsx hsy) = (`div`2) <$> (t2v $ game^.screenSize)
     (V2 cx cy) = game^.cellSize
@@ -84,31 +87,40 @@ event _ g = return g
 
 defaultGame = Game {
     _cells = A.listArray (V2 0 0,fldSz ^-^ V2 1 1) $ cycle [Nothing]
-  , _cellSize = V2 5 5
+  , _cellSize = V2 2 2
   , _fieldSize = fldSz
-  , _screenSize = (600,600)
+  , _setObject = dot
+  , _setDirection = D
+  , _screenSize = (800,800)
   , _surviveRule = [2,3]
   , _bornRule = [3]
   }
   where
-    fldSz = V2 120 120
+    fldSz = V2 400 400
 
 t2v :: (a,a) -> V2 a
 t2v = uncurry V2
 v2t :: V2 a -> (a,a)
 v2t (V2 x y) = (x,y)
 
-mkObj :: [V2 Int] -> Cell -> V2 Int -> [(V2 Int,Maybe Cell)]
-mkObj base cell pos = zip (map (^+^pos) base) $ cycle [Just cell]
+mkObj :: [V2 Int] -> Cell -> V2 Int -> Direction -> [(V2 Int,Maybe Cell)]
+mkObj base cell pos dir = zip (map ((^+^pos).(*!d2m dir)) base) $ cycle [Just cell]
+  where
+    d2m :: Direction -> V2 (V2 Int)
+    d2m U = V2 (V2 (-1) 0) (V2 0 (-1))
+    d2m R = V2 (V2 0 (-1)) (V2 1 0)
+    d2m L = V2 (V2 0 1) (V2 (-1) 0)
+    d2m D = V2 (V2 1 0) (V2 0 1)
 
 dot = [V2 0 0]
 block = [V2 0 0, V2 0 1, V2 1 0, V2 1 1]
-glider = [V2 0 1, V2 1 2, V2 2 0, V2 2 1, V2 2 2]
-lightSpaceship = [V2 0 1, V2 0 3, V2 1 4, V2 2 0, V2 2 4, V2 3 4, V2 4 1, V2 4 4, V2 5 2, V2 5 3, V2 5 4]
+glider = [V2 (-1) 0, V2 0 1, V2 1 (-1), V2 1 0, V2 1 1]
+lightSpaceship = [V2 (-2) (-1), V2 (-2) 1, V2 (-1) 2, V2 0 (-2), V2 0 2, V2 1 2, V2 2 (-1), V2 2 2, V2 3 0, V2 3 1, V2 3 2]
+line = [V2 x 0| x <- [-500..500]]
 
 createRandomCells :: V2 Int -> IO Field
 createRandomCells size = do
-  xs <- (R.newStdGen >>= return . fmap (<0.3) . R.randomRs (0,1::Float))
+  xs <- (R.newStdGen >>= return . fmap (const False) . R.randomRs (0,1::Float))
   return $ A.listArray (V2 0 0,size ^-^ V2 1 1) $ map toCell xs
   where
     toCell False = Nothing
@@ -117,7 +129,7 @@ createRandomCells size = do
 playGame :: IO ()
 playGame = do
   field <- createRandomCells (defaultGame^.fieldSize)
-  let game = defaultGame{ _cells=field, _screenSize=(600,600) }
+  let game = defaultGame{ _cells=field}
   G.playIO
     (G.InWindow "lifegame" (game^.screenSize) (80,80))
     G.white
